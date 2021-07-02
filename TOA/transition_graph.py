@@ -1,9 +1,7 @@
+import collections
 from typing import Dict, List, Union
 
-from utils import string_to_letters
-
-
-EPSILON = 'λ'
+from utils import string_to_letters, EPSILON, concat_regex, add_regex
 
 """
 1. REGEX to TG
@@ -19,8 +17,11 @@ class Node:
         self.output = output
         self.edges = edges
 
-    def get_edges(self, edge_key: str) -> List['Edge']:
+    def get_edges_by_label(self, edge_key: str) -> List['Edge']:
         return [e for e in self.edges if e.label == edge_key]
+
+    def get_edges_by_node(self, node_key: str) -> List['Edge']:
+        return [e for e in self.edges if e.n2.id == node_key]
 
     @property
     def id(self):
@@ -56,7 +57,7 @@ class TransitionGraph:
         start_node = self.start_state.label
         finish_nodes = [s.label for s in self.finish_states]
         table = {
-            state.label: [[e.n2.label for e in state.get_edges(w)] for w in self.words + [EPSILON]]
+            state.label: [[e.n2.label for e in state.get_edges_by_label(w)] for w in self.words + [EPSILON]]
             for state in self.states
         }
 
@@ -64,11 +65,11 @@ class TransitionGraph:
 
     @classmethod
     def from_transition_table(
-        cls,
-        words: List[str],
-        table: Dict[str, List[Union[str, List[str]]]],
-        start_node: str,
-        finish_nodes: Union[str, List[str]]
+            cls,
+            words: List[str],
+            table: Dict[str, List[Union[str, List[str]]]],
+            start_node: str,
+            finish_nodes: Union[str, List[str]]
     ) -> 'TransitionGraph':
         finish_nodes = [finish_nodes] if type(finish_nodes) is str else finish_nodes
 
@@ -108,7 +109,7 @@ class TransitionGraph:
         return cls(list(nodes.values()), start_state, finish_states, words)
 
     def is_finish_state(self, state: Node):
-        epsilon_nodes = state.get_edges(EPSILON)
+        epsilon_nodes = state.get_edges_by_label(EPSILON)
         is_finished = state in self.finish_states
 
         if len(epsilon_nodes) > 0 and not is_finished:
@@ -126,7 +127,7 @@ class TransitionGraph:
 
         while stack:
             state, pos = stack.pop()
-            epsilon_edges = state.get_edges(EPSILON)
+            epsilon_edges = state.get_edges_by_label(EPSILON)
 
             for ee in epsilon_edges:
                 stack.append((ee.n2, pos))
@@ -161,13 +162,13 @@ class TransitionGraph:
                 edges.append(f'{edge.n1.id}->{edge.n2.id} [label="{edge.label}"];')
 
         sep = "\n    "
-        return f'digraph {{'\
-            f'{sep}graph [rankdir=LR];'\
-            f'{sep}node [shape=point,label=""]ENTRY;'\
-            f'{sep}node [shape=circle];'\
-            f'{sep}{sep.join(states)}'\
-            f'{sep}{sep.join(edges)}'\
-            f'{sep[0]}}}'
+        return f'digraph {{' \
+               f'{sep}graph [rankdir=LR];' \
+               f'{sep}node [shape=point,label=""]ENTRY;' \
+               f'{sep}node [shape=circle];' \
+               f'{sep}{sep.join(states)}' \
+               f'{sep}{sep.join(edges)}' \
+               f'{sep[0]}}}'
 
     def get_input_edges(self, state_key: str):
         edges = []
@@ -180,35 +181,67 @@ class TransitionGraph:
         return edges
 
     def eliminate_state(self):
-        tg = self.clone()
-
-        if len(tg.finish_states) > 1:
+        # separate the finish node if we have multiple finish nodes
+        if len(self.finish_states) > 1:
             out_state = Node('z')
 
-            for state in tg.finish_states:
+            for state in self.finish_states:
                 state.edges.append(Edge(state, out_state, EPSILON))
 
-            tg.states.append(out_state)
-            tg.finish_states = [out_state]
-            return tg
+            self.states.append(out_state)
+            self.finish_states = [out_state]
+            return 'Separated finish states'
 
-        for state in [*tg.states]:
-            input_edges = tg.get_input_edges(state.label)
-            print(state.label, len(state.edges), len(input_edges))
+        # group edges if start and end node are same
+        join_count = 0
+        for state in self.states:
+            end_node_keys = [e.n2.id for e in state.edges]
+            duplicate_edges = [item for item, count in collections.Counter(end_node_keys).items() if count > 1]
 
-            if len(state.edges) == 1 and len(input_edges) == 1:
-                l1 = input_edges[0].label
-                l2 = state.edges[0].label
+            for key in duplicate_edges:
+                labels = set()
+                edges = state.get_edges_by_node(key)
+                n2 = edges[0].n2
 
-                n1 = input_edges[0].n1
-                n2 = state.edges[0].n2
+                for e in edges:
+                    labels.add(e.label)
+                    state.edges.remove(e)
 
-                n1.edges.remove(input_edges[0])
-                n1.edges.append(Edge(n1, n2, l1 + l2))
+                state.edges.append(Edge(state, n2, add_regex(*labels)))
+                join_count += 1
 
-                print(n1, n1.edges)
-                tg.states.remove(state)
-                return tg
+        if join_count:
+            return f'Joined common edges'
+
+        # eliminate nodes
+        for state in list(self.states):
+            if self.is_finish_state(state) or state == self.start_state:
+                continue
+
+            # handle edges to self
+            self_loop = ''
+            self_edges = state.get_edges_by_node(state.id)
+            if len(self_edges) > 0:
+                self_loop = f'({self_edges[0].label})*'
+                state.edges.remove(self_edges[0])
+                print(f'removed self edge {self_edges[0]}')
+
+            # rewire all the input and output edges
+            input_edges = self.get_input_edges(state.label)
+            for input_edge in input_edges:
+                n1 = input_edge.n1
+                l1 = input_edge.label
+
+                for output_edge in state.edges:
+                    l2 = output_edge.label
+                    n2 = output_edge.n2
+                    print(input_edge, output_edge, concat_regex(l1, self_loop, l2))
+                    n1.edges.append(Edge(n1, n2, concat_regex(l1, self_loop, l2)))
+
+                n1.edges.remove(input_edge)
+
+            self.states.remove(state)
+            return f'removed state {state}'
 
 
 if __name__ == '__main__':
@@ -223,6 +256,6 @@ if __name__ == '__main__':
 
     # print(tg.to_dot_diagram())
     # print(tg.evaluate('ab'))
-    tg.eliminate_state()\
-        .eliminate_state()\
+    tg.eliminate_state() \
+        .eliminate_state() \
         .eliminate_state()
