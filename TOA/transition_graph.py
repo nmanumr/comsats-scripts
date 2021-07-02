@@ -256,6 +256,3 @@ if __name__ == '__main__':
 
     # print(tg.to_dot_diagram())
     # print(tg.evaluate('ab'))
-    tg.eliminate_state() \
-        .eliminate_state() \
-        .eliminate_state()

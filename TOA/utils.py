@@ -28,7 +28,7 @@ def is_palindrome(string, lang):
     return letters == letters[::-1]
 
 
-def power_plindrome_string(string_len, lang):
+def power_palindrome_string(string_len, lang):
     return [s for s in power_string(string_len, lang) if is_palindrome(s, lang)]
 
 
