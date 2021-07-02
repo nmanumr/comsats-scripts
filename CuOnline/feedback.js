@@ -1,4 +1,6 @@
 /**
+ * Auto submits the feedback on CuOnline. why? firstly no body cares about our feedback 2ndly why its compulsory?
+ * 
  * How to run this script
  * 
  * - Step 1: Install ths chrome extension:
