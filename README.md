@@ -21,3 +21,7 @@ Here is some the status of some subjects:
 
 I was thinking to make a web app which will make these scripts much accessiable for everyone.
 To run python code in browser we can use PyIodide and compile all the required packages to web.
+
+## FAQs
+
+* **Can I ask for the implementation of new subject?** <br> Feel free to ask but there is no guaranty that I will implement that.
