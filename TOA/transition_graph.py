@@ -17,8 +17,16 @@ class Node:
         self.output = output
         self.edges = edges
 
-    def get_edges_by_label(self, edge_key: str) -> List['Edge']:
-        return [e for e in self.edges if e.label == edge_key]
+    def get_edges_by_label(self, edge_key: str, include_epsilon_edges=False) -> List['Edge']:
+        epsilon_edges = []
+
+        if edge_key is not EPSILON and include_epsilon_edges:
+            epsilon_nodes = [e.n2 for e in self.get_edges_by_label(EPSILON)]
+
+            for node in epsilon_nodes:
+                epsilon_edges += node.get_edges_by_label(edge_key)
+
+        return [e for e in self.edges if e.label == edge_key] + epsilon_edges
 
     def get_edges_by_node(self, node_key: str) -> List['Edge']:
         return [e for e in self.edges if e.n2.id == node_key]
@@ -242,6 +250,44 @@ class TransitionGraph:
 
             self.states.remove(state)
             return f'removed state {state}'
+
+    def to_dfa(self):
+        transition_table = {}
+        stack = [[self.start_state]]
+
+        while stack:
+            states = stack.pop()
+            tt_row = []
+
+            for word in self.words:
+                next_states_edges = sum([s.get_edges_by_label(word) for s in states], [])
+                next_states = [nse.n2 for nse in next_states_edges]
+                next_state_ids = [s.id for s in next_states]
+                next_state_id = ''.join(next_state_ids)
+
+                if next_state_id not in transition_table and len(next_state_id) > 0:
+                    stack.append(next_states)
+
+                tt_row.append(next_state_ids)
+
+            transition_table[''.join([str(s) for s in states])] = tt_row
+
+        return self.words, transition_table, self.start_state.id, [fs.id for fs in self.finish_states]
+
+    def remove_hanging_node(self):
+        stack = [self.start_state]
+        visited = []
+
+        while stack:
+            state = stack.pop()
+            visited.append(state)
+
+            stack.extend([e.n2 for e in state.edges if e.n2 not in visited])
+
+        to_delete = [s for s in self.states if s not in visited]
+        print(', '.join([str(s) for s in to_delete]))
+        for state in to_delete:
+            self.states.remove(state)
 
 
 if __name__ == '__main__':
