@@ -1,19 +1,18 @@
 import collections
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Tuple
 
 from utils import string_to_letters, EPSILON, concat_regex, add_regex
 
 """
 1. REGEX to TG
-2. NFA to DFA
 3. Moore, mealy machine
 4. Moore to mealy
 """
 
 
 class Node:
-    def __init__(self, label: str, edges: List['Edge'] = (), output=None):
-        self.label = label
+    def __init__(self, name: str, edges: List['Edge'] = (), output=None):
+        self.id = name
         self.output = output
         self.edges = edges
 
@@ -32,8 +31,10 @@ class Node:
         return [e for e in self.edges if e.n2.id == node_key]
 
     @property
-    def id(self):
-        return self.label
+    def label(self):
+        if self.output is not None:
+            return f'{self.id}/{self.output}'
+        return self.id
 
     def __str__(self):
         return self.id
@@ -45,6 +46,11 @@ class Edge:
         self.n2 = n2
         self.label = label
         self.output = output
+
+    def to_str(self):
+        if self.output is not None:
+            return f'{self.label}/{self.output}'
+        return self.label
 
     def __str__(self):
         return f'{self.n1}-({self.label})->{self.n2}'
@@ -77,18 +83,25 @@ class TransitionGraph:
             words: List[str],
             table: Dict[str, List[Union[str, List[str]]]],
             start_node: str,
-            finish_nodes: Union[str, List[str]]
+            finish_nodes: Union[str, List[str]],
+            state_outputs: Dict = None,
+            edge_outputs: List[Tuple] = (),
     ) -> 'TransitionGraph':
         finish_nodes = [finish_nodes] if type(finish_nodes) is str else finish_nodes
+        state_outputs = state_outputs if state_outputs else collections.defaultdict(lambda: None)
 
         nodes: Dict[str, Node] = {}
         start_state = None
 
         def get_or_add_node(s: str):
-            n = nodes[s] if s in nodes else Node(s)
+            n = nodes[s] if s in nodes else Node(s, output=state_outputs[s])
             if s not in nodes:
                 nodes[s] = n
             return n
+
+        def edge_output(n: Node, nn: Node):
+            o = [e[2] for e in edge_outputs if e[0] == n.id and e[1] == nn.id]
+            return o[0] if o else None
 
         for state, next_states in table.items():
             node = get_or_add_node(state)
@@ -104,16 +117,16 @@ class TransitionGraph:
                 label = EPSILON if i >= len(words) else words[i]
                 if type(next_state) is str:
                     next_node = get_or_add_node(next_state)
-                    edges.append(Edge(node, next_node, label))
+                    edges.append(Edge(node, next_node, label, edge_output(node, next_node)))
                     continue
 
                 for ns in next_state:
                     next_node = get_or_add_node(ns)
-                    edges.append(Edge(node, next_node, label))
+                    edges.append(Edge(node, next_node, label, edge_output(node, next_node)))
 
             node.edges = edges
 
-        finish_states = [n for n in nodes.values() if n.label in finish_nodes]
+        finish_states = [n for n in nodes.values() if n.id in finish_nodes]
         return cls(list(nodes.values()), start_state, finish_states, words)
 
     def is_finish_state(self, state: Node):
@@ -142,7 +155,7 @@ class TransitionGraph:
 
             if pos >= len(letters):
                 if len(stack) == 0 or self.is_finish_state(state):
-                    return [self.is_finish_state(state), state.label, pos]
+                    return [self.is_finish_state(state), state.id, pos]
                 continue
 
             for edge in state.edges:
@@ -167,7 +180,7 @@ class TransitionGraph:
                 states.append(f'{state.id}[label="{state.label}"];')
 
             for edge in state.edges:
-                edges.append(f'{edge.n1.id}->{edge.n2.id} [label="{edge.label}"];')
+                edges.append(f'{edge.n1.id}->{edge.n2.id} [label="{edge.to_str()}"];')
 
         sep = "\n    "
         return f'digraph {{' \
@@ -232,10 +245,10 @@ class TransitionGraph:
             if len(self_edges) > 0:
                 self_loop = f'({self_edges[0].label})*'
                 state.edges.remove(self_edges[0])
-                print(f'removed self edge {self_edges[0]}')
+                # print(f'removed self edge {self_edges[0]}')
 
             # rewire all the input and output edges
-            input_edges = self.get_input_edges(state.label)
+            input_edges = self.get_input_edges(state.id)
             for input_edge in input_edges:
                 n1 = input_edge.n1
                 l1 = input_edge.label
@@ -243,12 +256,12 @@ class TransitionGraph:
                 for output_edge in state.edges:
                     l2 = output_edge.label
                     n2 = output_edge.n2
-                    print(input_edge, output_edge, concat_regex(l1, self_loop, l2))
                     n1.edges.append(Edge(n1, n2, concat_regex(l1, self_loop, l2)))
 
                 n1.edges.remove(input_edge)
 
             self.states.remove(state)
+            print(f'removed state {state}')
             return f'removed state {state}'
 
     def to_dfa(self):
@@ -288,6 +301,37 @@ class TransitionGraph:
         print(', '.join([str(s) for s in to_delete]))
         for state in to_delete:
             self.states.remove(state)
+
+
+class MooreMachine(TransitionGraph):
+    @classmethod
+    def from_transition_table(
+            cls,
+            words: List[str],
+            table: Dict[str, List[Union[str, List[str]]]],
+            start_node: str,
+            finish_nodes: Union[str, List[str]],
+            **kwargs
+    ):
+        outputs = {k: v[0] for k, v in table.items()}
+        table = {k: v[1] for k, v in table.items()}
+        return super().from_transition_table(words, table, start_node, finish_nodes, state_outputs=outputs)
+
+
+class MealyMachine(TransitionGraph):
+    @classmethod
+    def from_transition_table(
+            cls,
+            words: List[str],
+            table: Dict[str, List[Union[str, List[str]]]],
+            start_node: str,
+            finish_nodes: Union[str, List[str]],
+            **kwargs
+    ):
+        outputs = [[(k, e[1], e[0]) for e in v] for k, v in table.items()]
+        outputs = sum(outputs, [])
+        table = {k: [e[1] for e in v] for k, v in table.items()}
+        return super().from_transition_table(words, table, start_node, finish_nodes, edge_outputs=outputs)
 
 
 if __name__ == '__main__':
